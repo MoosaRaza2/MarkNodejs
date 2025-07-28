@@ -18,103 +18,69 @@ const shopify = new Shopify({
   password: process.env.SHOPIFY_PASSWORD,
 });
 
-const updateVariantPrice = async (variantId, price) => {
-  const mutation = `mutation productVariantUpdate($input: ProductVariantInput!) {
-    productVariantUpdate(input: $input) {
-      productVariant {
-        id
-        price
-      }
-      userErrors {
-        field
-        message
-      }
-    }
-  }`;
-
-  const variables = {
-    input: {
-      id: variantId,
-      price: parseFloat(price).toFixed(2)
-    }
-  };
-
-  try {
-    const response = await shopify.graphql(mutation, variables);
-    return response;
-  } catch (error) {
-    console.error("Error updating variant price:", error);
-    throw error;
-  }
-};
-
 const createProductWithImage = async (title, price, description = "", vendor = "", imageUrl = "") => {
-  const mutation = `mutation productCreate($input: ProductInput!) {
-    productCreate(input: $input) {
-      product {
-        id
-        title
-        handle
-        descriptionHtml
-        vendor
-        images(first: 5) {
-          nodes {
-            id
-            url
-            altText
-          }
-        }
-        variants(first: 1) {
-          nodes {
-            id
-            title
-            price
-            sku
-          }
-        }
-      }
-      userErrors {
-        field
-        message
-      }
-    }
-  }`;
-
-  const productInput = {
-    title: title,
-    descriptionHtml: description,
-    vendor: vendor
-  };
-
-  // Add image if provided
-  if (imageUrl && imageUrl.trim() !== "") {
-    productInput.images = [
-      {
-        src: imageUrl,
-        altText: title
-      }
-    ];
-  }
-
-  const variables = {
-    input: productInput
-  };
-
   try {
-    const response = await shopify.graphql(mutation, variables);
-    
-    // After creating the product, update the variant price
-    if (response.productCreate.product && response.productCreate.product.variants.nodes.length > 0) {
-      const variantId = response.productCreate.product.variants.nodes[0].id;
-      await updateVariantPrice(variantId, price);
-      
-      // Update the response to reflect the new price
-      response.productCreate.product.variants.nodes[0].price = parseFloat(price).toFixed(2);
+    // Prepare product data for REST API
+    const productData = {
+      product: {
+        title: title,
+        body_html: description,
+        vendor: vendor,
+        variants: [
+          {
+            price: parseFloat(price).toFixed(2),
+            inventory_management: "shopify",
+            inventory_policy: "deny"
+          }
+        ]
+      }
+    };
+
+    // Add image if provided
+    if (imageUrl && imageUrl.trim() !== "") {
+      productData.product.images = [
+        {
+          src: imageUrl,
+          alt: title
+        }
+      ];
     }
+
+    // Create product using REST API
+    const product = await shopify.product.create(productData.product);
     
-    return response;
+    // Format response to match GraphQL structure for consistency
+    const formattedResponse = {
+      productCreate: {
+        product: {
+          id: `gid://shopify/Product/${product.id}`,
+          title: product.title,
+          handle: product.handle,
+          descriptionHtml: product.body_html,
+          vendor: product.vendor,
+          images: {
+            nodes: product.images?.map(img => ({
+              id: `gid://shopify/ProductImage/${img.id}`,
+              url: img.src,
+              altText: img.alt
+            })) || []
+          },
+          variants: {
+            nodes: product.variants?.map(variant => ({
+              id: `gid://shopify/ProductVariant/${variant.id}`,
+              title: variant.title,
+              price: variant.price,
+              sku: variant.sku
+            })) || []
+          }
+        },
+        userErrors: []
+      }
+    };
+    
+    return formattedResponse;
   } catch (error) {
-    console.error("Error creating product with image:", error);
+    console.error("Error creating product with REST API:", error);
     throw error;
   }
 };
