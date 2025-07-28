@@ -18,23 +18,12 @@ const shopify = new Shopify({
   password: process.env.SHOPIFY_PASSWORD,
 });
 
-const createProduct = async (title, price, description = "", vendor = "") => {
-  const mutation = `mutation productCreate($input: ProductInput!) {
-    productCreate(input: $input) {
-      product {
+const updateVariantPrice = async (variantId, price) => {
+  const mutation = `mutation productVariantUpdate($input: ProductVariantInput!) {
+    productVariantUpdate(input: $input) {
+      productVariant {
         id
-        title
-        handle
-        descriptionHtml
-        vendor
-        variants(first: 1) {
-          nodes {
-            id
-            title
-            price
-            sku
-          }
-        }
+        price
       }
       userErrors {
         field
@@ -45,16 +34,8 @@ const createProduct = async (title, price, description = "", vendor = "") => {
 
   const variables = {
     input: {
-      title: title,
-      descriptionHtml: description,
-      vendor: vendor,
-      variants: [
-        {
-          price: parseFloat(price).toFixed(2),
-          inventoryManagement: "SHOPIFY",
-          inventoryPolicy: "DENY"
-        }
-      ]
+      id: variantId,
+      price: parseFloat(price).toFixed(2)
     }
   };
 
@@ -62,7 +43,7 @@ const createProduct = async (title, price, description = "", vendor = "") => {
     const response = await shopify.graphql(mutation, variables);
     return response;
   } catch (error) {
-    console.error("Error creating product:", error);
+    console.error("Error updating variant price:", error);
     throw error;
   }
 };
@@ -102,14 +83,7 @@ const createProductWithImage = async (title, price, description = "", vendor = "
   const productInput = {
     title: title,
     descriptionHtml: description,
-    vendor: vendor,
-    variants: [
-      {
-        price: parseFloat(price).toFixed(2),
-        inventoryManagement: "SHOPIFY",
-        inventoryPolicy: "DENY"
-      }
-    ]
+    vendor: vendor
   };
 
   // Add image if provided
@@ -128,6 +102,16 @@ const createProductWithImage = async (title, price, description = "", vendor = "
 
   try {
     const response = await shopify.graphql(mutation, variables);
+    
+    // After creating the product, update the variant price
+    if (response.productCreate.product && response.productCreate.product.variants.nodes.length > 0) {
+      const variantId = response.productCreate.product.variants.nodes[0].id;
+      await updateVariantPrice(variantId, price);
+      
+      // Update the response to reflect the new price
+      response.productCreate.product.variants.nodes[0].price = parseFloat(price).toFixed(2);
+    }
+    
     return response;
   } catch (error) {
     console.error("Error creating product with image:", error);
@@ -183,7 +167,7 @@ app.get("/create-product/:price", async (req, res) => {
     const title = `Product - $${parseFloat(price).toFixed(2)}`;
     const description = `<p>Product created with price $${parseFloat(price).toFixed(2)}</p>`;
     
-    const response = await createProduct(title, price, description);
+    const response = await createProductWithImage(title, price, description, "", "");
     
     if (response.productCreate.userErrors && response.productCreate.userErrors.length > 0) {
       return res.status(400).json({ 
@@ -223,7 +207,7 @@ app.get("/create-product/:price/:title", async (req, res) => {
     const decodedTitle = decodeURIComponent(title);
     const description = `<p>${decodedTitle} - Price: $${parseFloat(price).toFixed(2)}</p>`;
     
-    const response = await createProduct(decodedTitle, price, description);
+    const response = await createProductWithImage(decodedTitle, price, description, "", "");
     
     if (response.productCreate.userErrors && response.productCreate.userErrors.length > 0) {
       return res.status(400).json({ 
@@ -312,11 +296,12 @@ app.post("/create-product", async (req, res) => {
       });
     }
     
-    const response = await createProduct(
+    const response = await createProductWithImage(
       title.trim(), 
       price, 
       description || `<p>${title.trim()} - Price: $${parseFloat(price).toFixed(2)}</p>`,
-      vendor || ""
+      vendor || "",
+      "" // No image for POST endpoint, but using same function for consistency
     );
     
     if (response.productCreate.userErrors && response.productCreate.userErrors.length > 0) {
