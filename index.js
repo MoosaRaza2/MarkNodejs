@@ -67,6 +67,74 @@ const createProduct = async (title, price, description = "", vendor = "") => {
   }
 };
 
+const createProductWithImage = async (title, price, description = "", vendor = "", imageUrl = "") => {
+  const mutation = `mutation productCreate($input: ProductInput!) {
+    productCreate(input: $input) {
+      product {
+        id
+        title
+        handle
+        descriptionHtml
+        vendor
+        images(first: 5) {
+          nodes {
+            id
+            url
+            altText
+          }
+        }
+        variants(first: 1) {
+          nodes {
+            id
+            title
+            price
+            sku
+          }
+        }
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }`;
+
+  const productInput = {
+    title: title,
+    descriptionHtml: description,
+    vendor: vendor,
+    variants: [
+      {
+        price: parseFloat(price).toFixed(2),
+        inventoryManagement: "SHOPIFY",
+        inventoryPolicy: "DENY"
+      }
+    ]
+  };
+
+  // Add image if provided
+  if (imageUrl && imageUrl.trim() !== "") {
+    productInput.images = [
+      {
+        src: imageUrl,
+        altText: title
+      }
+    ];
+  }
+
+  const variables = {
+    input: productInput
+  };
+
+  try {
+    const response = await shopify.graphql(mutation, variables);
+    return response;
+  } catch (error) {
+    console.error("Error creating product with image:", error);
+    throw error;
+  }
+};
+
 // CORS middleware
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*"); // Allow all origins for Heroku
@@ -89,7 +157,13 @@ app.get("/", (req, res) => {
     endpoints: {
       createProduct: "/create-product/:price",
       createProductWithDetails: "/create-product/:price/:title",
+      createProductFull: "/create-product-full/:price?title=...&image=...&description=...&vendor=...",
       createProductPost: "POST /create-product"
+    },
+    examples: {
+      basicProduct: "/create-product/29.99",
+      productWithTitle: "/create-product/49.99/My%20Product",
+      fullProduct: "/create-product-full/79.99?title=Amazing%20Product&image=https://example.com/image.jpg&description=Great%20product&vendor=My%20Brand"
     }
   });
 });
@@ -166,6 +240,53 @@ app.get("/create-product/:price/:title", async (req, res) => {
     
   } catch (error) {
     console.error("Error in create-product endpoint:", error);
+    res.status(500).json({ 
+      error: "Failed to create product", 
+      details: error.message 
+    });
+  }
+});
+
+// Create product with price, title, and image via query parameters
+app.get("/create-product-full/:price", async (req, res) => {
+  try {
+    const price = req.params.price;
+    const { title, image, description, vendor } = req.query;
+    
+    // Validate price
+    if (isNaN(price) || parseFloat(price) <= 0) {
+      return res.status(400).json({ 
+        error: "Invalid price. Price must be a positive number." 
+      });
+    }
+
+    // Use provided title or generate default
+    const productTitle = title ? decodeURIComponent(title) : `Product - $${parseFloat(price).toFixed(2)}`;
+    
+    // Use provided description or generate default
+    const productDescription = description ? 
+      decodeURIComponent(description) : 
+      `<p>${productTitle} - Price: $${parseFloat(price).toFixed(2)}</p>`;
+    
+    const productVendor = vendor ? decodeURIComponent(vendor) : "";
+    
+    const response = await createProductWithImage(productTitle, price, productDescription, productVendor, image);
+    
+    if (response.productCreate.userErrors && response.productCreate.userErrors.length > 0) {
+      return res.status(400).json({ 
+        error: "Shopify API Error", 
+        details: response.productCreate.userErrors 
+      });
+    }
+
+    res.json({
+      success: true,
+      product: response.productCreate.product,
+      message: `Product "${productTitle}" created successfully with price $${parseFloat(price).toFixed(2)}${image ? ' and image' : ''}`
+    });
+    
+  } catch (error) {
+    console.error("Error in create-product-full endpoint:", error);
     res.status(500).json({ 
       error: "Failed to create product", 
       details: error.message 
