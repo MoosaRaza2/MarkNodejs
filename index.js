@@ -26,11 +26,13 @@ const createProductWithImage = async (title, price, description = "", vendor = "
         title: title,
         body_html: description,
         vendor: vendor,
+        published: true, // Publish to online store
+        status: "active", // Make sure product is active
         variants: [
           {
             price: parseFloat(price).toFixed(2),
-            inventory_management: "shopify",
-            inventory_policy: "deny"
+            inventory_management: null, // Don't track inventory
+            inventory_policy: "continue" // Allow purchases even if out of stock
           }
         ]
       }
